@@ -67,8 +67,11 @@ export function useMidi(): MidiState {
       }
     }
 
-    // Pre-standard shims (e.g. the iOS Web MIDI Browser app) expose inputs as
-    // a function or array-like instead of a Map, and may omit `state`
+    // Pre-standard shims (e.g. the iOS Web MIDI Browser app's cwilso-derived
+    // polyfill) expose inputs as a Map-like whose values() returns an object
+    // with only .next() (no Symbol.iterator, so for...of/spread throw), or as
+    // a function/array-like — and may omit `state`. Their forEach(port) is
+    // call-compatible with the real Map's forEach(value, ...), so prefer it.
     const listInputs = (a: MIDIAccess): MIDIInput[] => {
       const raw =
         typeof (a as { inputs: unknown }).inputs === 'function'
@@ -76,9 +79,18 @@ export function useMidi(): MidiState {
           : a.inputs
       if (!raw) return []
       const out: MIDIInput[] = []
-      const anyRaw = raw as { values?: () => Iterable<MIDIInput>; length?: number }
-      if (typeof anyRaw.values === 'function') {
-        for (const input of anyRaw.values()) out.push(input)
+      const anyRaw = raw as {
+        forEach?: (cb: (v: MIDIInput) => void) => void
+        values?: () => { next: () => { value?: MIDIInput; done?: boolean } }
+        length?: number
+      }
+      if (typeof anyRaw.forEach === 'function') {
+        anyRaw.forEach((input) => out.push(input))
+      } else if (typeof anyRaw.values === 'function') {
+        const it = anyRaw.values()
+        for (let r = it.next(); !r.done; r = it.next()) {
+          if (r.value) out.push(r.value)
+        }
       } else if (typeof anyRaw.length === 'number') {
         for (let i = 0; i < anyRaw.length; i++) out.push((raw as MIDIInput[])[i])
       }
@@ -87,12 +99,18 @@ export function useMidi(): MidiState {
 
     const bindInputs = () => {
       if (!access) return
-      let name: string | null = null
-      for (const input of listInputs(access)) {
-        input.onmidimessage = handleMessage
-        if (!name && input.state !== 'disconnected') name = input.name ?? 'MIDI device'
+      // Never throw: this runs inside the shim's own callback chain, where an
+      // exception would silently kill the whole success path
+      try {
+        let name: string | null = null
+        for (const input of listInputs(access)) {
+          input.onmidimessage = handleMessage
+          if (!name && input.state !== 'disconnected') name = input.name ?? 'MIDI device'
+        }
+        setDeviceName(name)
+      } catch {
+        setDeviceName(null)
       }
-      setDeviceName(name)
     }
 
     const onAccess = (midiAccess: MIDIAccess) => {
