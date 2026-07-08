@@ -106,13 +106,19 @@ export function useMidi(): MidiState {
       }
     }
 
-    // The standard API returns a Promise; the 2012-draft API (still injected
-    // by some iOS wrapper apps) takes (successCallback, errorCallback) and
-    // returns undefined
+    // The standard API returns a Promise. Old wrapper-app shims (e.g. the iOS
+    // Web MIDI Browser, which injects the pre-Promise cwilso shim) return a
+    // homemade thenable whose .then() itself returns undefined — so pass both
+    // handlers into then() and never chain, or fall back to the 2012-draft
+    // (successCallback, errorCallback) form if there is no thenable at all
     try {
       const result = navigator.requestMIDIAccess({ sysex: false }) as unknown
-      if (result && typeof (result as Promise<MIDIAccess>).then === 'function') {
-        ;(result as Promise<MIDIAccess>).then(onAccess).catch(() => setSupported(false))
+      const thenable = result as { then?: unknown } | null | undefined
+      if (thenable && typeof thenable.then === 'function') {
+        ;(thenable as { then: (ok: (a: MIDIAccess) => void, err: () => void) => unknown }).then(
+          onAccess,
+          () => setSupported(false),
+        )
       } else {
         ;(
           navigator.requestMIDIAccess as unknown as (
