@@ -1,12 +1,21 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SettingsProvider } from '@/context/SettingsContext'
 import { ToastProvider } from '@/components/ui/toast'
 import { Sidebar } from '@/components/Sidebar'
 import { TrainingView } from '@/components/TrainingView'
 import { useMidi } from '@/hooks/useMidi'
 
+declare global {
+  interface Window {
+    __leitmotifBooted?: boolean
+  }
+}
+
 export default function App() {
   const midi = useMidi()
+  useEffect(() => {
+    window.__leitmotifBooted = true
+  }, [])
   const [progressVersion, setProgressVersion] = useState(0)
   const [resetVersion, setResetVersion] = useState(0)
   const bumpProgress = useCallback(() => setProgressVersion((v) => v + 1), [])

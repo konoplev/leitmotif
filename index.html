@@ -16,13 +16,15 @@
       // instead of a silent black page
       (function () {
         function show(msg) {
-          var root = document.getElementById('root');
-          if (root && !root.hasChildNodes()) {
-            root.innerHTML =
-              '<pre style="color:#f87171;background:#111;padding:16px;margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace">App failed to start:\n\n' +
-              msg +
-              '</pre>';
-          }
+          // App.tsx sets this flag once React has mounted successfully
+          if (window.__leitmotifBooted) return;
+          var pre = document.createElement('pre');
+          pre.setAttribute(
+            'style',
+            'color:#f87171;background:#111;padding:16px;margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace'
+          );
+          pre.textContent = 'App failed to start:\n\n' + msg;
+          document.body.insertBefore(pre, document.body.firstChild);
         }
         window.addEventListener('error', function (e) {
           show(e.message || String(e.error || 'unknown error'));

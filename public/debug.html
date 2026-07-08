@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leitmotif debug</title>
+</head>
+<body style="background:#fff;color:#000;font-family:monospace;font-size:13px;padding:12px;margin:0">
+<div style="background:#16a34a;color:#fff;padding:10px;font-weight:bold">
+  DEBUG PAGE LOADED (HTML + CSS work)
+</div>
+<pre id="out" style="white-space:pre-wrap;word-break:break-all">JavaScript did NOT run</pre>
+<script>
+(function () {
+  var lines = [];
+  function add(k, v) { lines.push(k + ': ' + v); }
+  function render() { document.getElementById('out').textContent = lines.join('\n\n'); }
+
+  add('userAgent', navigator.userAgent);
+  add('ES modules', 'noModule' in document.createElement('script') ? 'supported' : 'NOT supported');
+  add('Promise', typeof Promise);
+  add('fetch', typeof fetch);
+  add('ResizeObserver', typeof ResizeObserver);
+  add('requestMIDIAccess', typeof navigator.requestMIDIAccess);
+
+  try {
+    localStorage.setItem('__test', '1');
+    localStorage.removeItem('__test');
+    add('localStorage', 'works');
+  } catch (e) {
+    add('localStorage', 'THROWS: ' + e);
+  }
+
+  try {
+    add('optional chaining / nullish', new Function('var a = {}; return a?.b ?? "ok"')());
+  } catch (e) {
+    add('optional chaining / nullish', 'SYNTAX ERROR (old engine): ' + e);
+  }
+
+  window.addEventListener('error', function (e) {
+    add('ERROR EVENT', (e.message || String(e.error)) + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
+    render();
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    add('UNHANDLED REJECTION', String((e.reason && e.reason.message) || e.reason));
+    render();
+  });
+  render();
+
+  // Try loading the real app bundle inside this page to surface its error
+  fetch('/').then(function (r) { return r.text(); }).then(function (html) {
+    var m = html.match(/src="(\/assets\/index-[^"]+\.js)"/);
+    add('app bundle', m ? m[1] : 'NOT FOUND in index.html');
+    render();
+    if (m) {
+      var s = document.createElement('script');
+      s.type = 'module';
+      s.src = m[1];
+      s.onerror = function () { add('bundle load', 'FAILED to load/parse'); render(); };
+      document.body.appendChild(s);
+      setTimeout(function () {
+        add('bundle load', 'script tag added; if no ERROR EVENT above, the bundle parsed fine');
+        render();
+      }, 3000);
+    }
+  }).catch(function (e) {
+    add('fetch /', 'FAILED: ' + e);
+    render();
+  });
+})();
+</script>
+</body>
+</html>

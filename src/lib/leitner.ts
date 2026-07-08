@@ -26,11 +26,19 @@ function loadAll(): CardMap {
 }
 
 function saveAll(cards: CardMap): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cards))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cards))
+  } catch {
+    // Storage disabled (some WebViews / private mode): train without persistence
+  }
 }
 
 export function resetProgress(): void {
-  localStorage.removeItem(STORAGE_KEY)
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // ignore
+  }
 }
 
 function cardIdsForLevels(type: 'note' | 'chord', levels: number[]): { id: string; level: number }[] {
