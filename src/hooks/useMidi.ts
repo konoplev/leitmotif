@@ -67,33 +67,75 @@ export function useMidi(): MidiState {
       }
     }
 
+    // Pre-standard shims (e.g. the iOS Web MIDI Browser app) expose inputs as
+    // a function or array-like instead of a Map, and may omit `state`
+    const listInputs = (a: MIDIAccess): MIDIInput[] => {
+      const raw =
+        typeof (a as { inputs: unknown }).inputs === 'function'
+          ? (a as unknown as { inputs: () => unknown }).inputs()
+          : a.inputs
+      if (!raw) return []
+      const out: MIDIInput[] = []
+      const anyRaw = raw as { values?: () => Iterable<MIDIInput>; length?: number }
+      if (typeof anyRaw.values === 'function') {
+        for (const input of anyRaw.values()) out.push(input)
+      } else if (typeof anyRaw.length === 'number') {
+        for (let i = 0; i < anyRaw.length; i++) out.push((raw as MIDIInput[])[i])
+      }
+      return out
+    }
+
     const bindInputs = () => {
       if (!access) return
       let name: string | null = null
-      access.inputs.forEach((input) => {
+      for (const input of listInputs(access)) {
         input.onmidimessage = handleMessage
-        if (!name && input.state === 'connected') name = input.name ?? 'MIDI device'
-      })
+        if (!name && input.state !== 'disconnected') name = input.name ?? 'MIDI device'
+      }
       setDeviceName(name)
     }
 
-    navigator
-      .requestMIDIAccess({ sysex: false })
-      .then((midiAccess) => {
-        if (cancelled) return
-        access = midiAccess
-        bindInputs()
+    const onAccess = (midiAccess: MIDIAccess) => {
+      if (cancelled) return
+      access = midiAccess
+      bindInputs()
+      try {
         midiAccess.onstatechange = bindInputs
-      })
-      .catch(() => setSupported(false))
+      } catch {
+        // shim without statechange support
+      }
+    }
+
+    // The standard API returns a Promise; the 2012-draft API (still injected
+    // by some iOS wrapper apps) takes (successCallback, errorCallback) and
+    // returns undefined
+    try {
+      const result = navigator.requestMIDIAccess({ sysex: false }) as unknown
+      if (result && typeof (result as Promise<MIDIAccess>).then === 'function') {
+        ;(result as Promise<MIDIAccess>).then(onAccess).catch(() => setSupported(false))
+      } else {
+        ;(
+          navigator.requestMIDIAccess as unknown as (
+            ok: (a: MIDIAccess) => void,
+            err: () => void,
+          ) => void
+        )(onAccess, () => setSupported(false))
+      }
+    } catch {
+      setSupported(false)
+    }
 
     return () => {
       cancelled = true
       if (access) {
-        access.onstatechange = null
-        access.inputs.forEach((input) => {
-          input.onmidimessage = null
-        })
+        try {
+          access.onstatechange = null
+          for (const input of listInputs(access)) {
+            input.onmidimessage = null
+          }
+        } catch {
+          // best effort on shims
+        }
       }
     }
   }, [noteOn, noteOff])
