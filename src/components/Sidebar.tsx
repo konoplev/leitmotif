@@ -64,7 +64,7 @@ export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }:
   }
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col gap-6 overflow-y-auto border-r bg-card p-5">
+    <aside className="order-2 flex w-full shrink-0 flex-col gap-6 border-t bg-card p-5 lg:order-1 lg:h-full lg:w-80 lg:overflow-y-auto lg:border-r lg:border-t-0">
       <div className="flex items-center gap-2">
         <Piano className="h-5 w-5" />
         <h1 className="text-lg font-semibold tracking-tight">Leitmotif</h1>

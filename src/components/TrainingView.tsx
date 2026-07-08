@@ -222,7 +222,7 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
       : []
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col">
+    <main className="order-1 flex min-h-dvh min-w-0 flex-1 flex-col lg:order-2 lg:min-h-0">
       {/* Flashcard display */}
       <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
         {target?.kind === 'note' && (

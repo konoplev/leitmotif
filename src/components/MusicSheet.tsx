@@ -20,6 +20,13 @@ export function MusicSheet({ clef, notes, height = 220 }: MusicSheetProps) {
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
+    if (typeof ResizeObserver === 'undefined') {
+      // Old WebViews: fall back to window resize events
+      const measure = () => setWidth(Math.floor(el.clientWidth))
+      measure()
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
     const observer = new ResizeObserver((entries) => {
       setWidth(Math.floor(entries[0].contentRect.width))
     })

@@ -18,7 +18,7 @@ export default function App() {
   return (
     <SettingsProvider>
       <ToastProvider>
-        <div className="flex h-screen overflow-hidden">
+        <div className="flex h-dvh flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
           <Sidebar
             deviceName={midi.deviceName}
             midiSupported={midi.supported}

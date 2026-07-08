@@ -11,6 +11,27 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // If the app fails to boot (old WebView, missing API), show the error
+      // instead of a silent black page
+      (function () {
+        function show(msg) {
+          var root = document.getElementById('root');
+          if (root && !root.hasChildNodes()) {
+            root.innerHTML =
+              '<pre style="color:#f87171;background:#111;padding:16px;margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace">App failed to start:\n\n' +
+              msg +
+              '</pre>';
+          }
+        }
+        window.addEventListener('error', function (e) {
+          show(e.message || String(e.error || 'unknown error'));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          show(String((e.reason && e.reason.message) || e.reason || 'unhandled rejection'));
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
