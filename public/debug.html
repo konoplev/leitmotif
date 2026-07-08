@@ -5,68 +5,125 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Leitmotif debug</title>
 </head>
-<body style="background:#fff;color:#000;font-family:monospace;font-size:13px;padding:12px;margin:0">
+<body style="background:#fff;color:#000;font-family:monospace;font-size:12px;padding:12px;margin:0">
 <div style="background:#16a34a;color:#fff;padding:10px;font-weight:bold">
-  DEBUG PAGE LOADED (HTML + CSS work)
+  DEBUG v2 — press some MIDI keys after the page loads
 </div>
 <pre id="out" style="white-space:pre-wrap;word-break:break-all">JavaScript did NOT run</pre>
 <script>
 (function () {
-  var lines = [];
-  function add(k, v) { lines.push(k + ': ' + v); }
-  function render() { document.getElementById('out').textContent = lines.join('\n\n'); }
-
-  add('userAgent', navigator.userAgent);
-  add('ES modules', 'noModule' in document.createElement('script') ? 'supported' : 'NOT supported');
-  add('Promise', typeof Promise);
-  add('fetch', typeof fetch);
-  add('ResizeObserver', typeof ResizeObserver);
-  add('requestMIDIAccess', typeof navigator.requestMIDIAccess);
-
-  try {
-    localStorage.setItem('__test', '1');
-    localStorage.removeItem('__test');
-    add('localStorage', 'works');
-  } catch (e) {
-    add('localStorage', 'THROWS: ' + e);
+  var lines = {};
+  var order = [];
+  function add(k, v) {
+    if (!(k in lines)) order.push(k);
+    lines[k] = v;
+    render();
+  }
+  function render() {
+    var s = [];
+    for (var i = 0; i < order.length; i++) s.push(order[i] + ': ' + lines[order[i]]);
+    document.getElementById('out').textContent = s.join('\n\n');
   }
 
-  try {
-    add('optional chaining / nullish', new Function('var a = {}; return a?.b ?? "ok"')());
-  } catch (e) {
-    add('optional chaining / nullish', 'SYNTAX ERROR (old engine): ' + e);
-  }
+  // Capture the native bridge calls instead of letting them throw
+  var midiLog = [];
+  var stub = function () {
+    var args = [];
+    for (var i = 0; i < arguments.length; i++) {
+      var a = arguments[i];
+      try {
+        args.push(typeof a + ' ' + JSON.stringify(a));
+      } catch (e) {
+        args.push(typeof a + ' <unserializable>');
+      }
+    }
+    midiLog.push(args.join(' | '));
+    add('bridge calls captured', midiLog.length + '\n  first 8:\n  ' + midiLog.slice(0, 8).join('\n  '));
+  };
+  window._callback_receiveMIDIMessage = stub;
 
   window.addEventListener('error', function (e) {
     add('ERROR EVENT', (e.message || String(e.error)) + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
-    render();
   });
-  window.addEventListener('unhandledrejection', function (e) {
-    add('UNHANDLED REJECTION', String((e.reason && e.reason.message) || e.reason));
-    render();
-  });
-  render();
 
-  // Try loading the real app bundle inside this page to surface its error
-  fetch('/').then(function (r) { return r.text(); }).then(function (html) {
-    var m = html.match(/src="(\/assets\/index-[^"]+\.js)"/);
-    add('app bundle', m ? m[1] : 'NOT FOUND in index.html');
-    render();
-    if (m) {
-      var s = document.createElement('script');
-      s.type = 'module';
-      s.src = m[1];
-      s.onerror = function () { add('bundle load', 'FAILED to load/parse'); render(); };
-      document.body.appendChild(s);
-      setTimeout(function () {
-        add('bundle load', 'script tag added; if no ERROR EVENT above, the bundle parsed fine');
-        render();
-      }, 3000);
+  add('userAgent', navigator.userAgent);
+  add('requestMIDIAccess SOURCE', String(navigator.requestMIDIAccess));
+
+  var globals = [];
+  try {
+    var names = Object.getOwnPropertyNames(window);
+    for (var i = 0; i < names.length; i++) {
+      if (/midi|_callback|webkit.*handler/i.test(names[i])) globals.push(names[i] + ' (' + typeof window[names[i]] + ')');
     }
-  }).catch(function (e) {
-    add('fetch /', 'FAILED: ' + e);
-    render();
-  });
+  } catch (e) {
+    globals.push('enumeration failed: ' + e);
+  }
+  add('MIDI-ish globals', globals.join(', ') || 'none');
+
+  try {
+    var wk = window.webkit && window.webkit.messageHandlers;
+    var hs = [];
+    if (wk) for (var k in wk) hs.push(k);
+    add('webkit.messageHandlers', wk ? hs.join(', ') || '(none enumerable)' : 'absent');
+  } catch (e) {
+    add('webkit.messageHandlers', 'error: ' + e);
+  }
+
+  try {
+    var r = navigator.requestMIDIAccess({ sysex: false });
+    add('call with options returned', String(r) + ' (' + typeof r + ')');
+  } catch (e) {
+    add('call with options returned', 'THROWS: ' + e);
+  }
+
+  function describeAccess(access) {
+    var desc = [];
+    for (var k in access) {
+      try { desc.push(k + ':' + typeof access[k]); } catch (e) { desc.push(k + ':?'); }
+    }
+    add('SUCCESS callback fired, access', String(access) + ' {' + desc.join(', ') + '}');
+    try {
+      var inputs = typeof access.inputs === 'function' ? access.inputs() : access.inputs;
+      add('inputs', Object.prototype.toString.call(inputs) + ' length=' + (inputs && inputs.length) + ' size=' + (inputs && inputs.size));
+      var list = [];
+      if (inputs && typeof inputs.values === 'function') {
+        var it = inputs.values(), n;
+        while (!(n = it.next()).done) list.push(n.value);
+      } else if (inputs && typeof inputs.length === 'number') {
+        for (var i = 0; i < inputs.length; i++) list.push(inputs[i]);
+      }
+      var infos = [];
+      for (var j = 0; j < list.length; j++) {
+        var d = [];
+        for (var p in list[j]) { try { d.push(p + '=' + (typeof list[j][p] === 'function' ? 'fn' : list[j][p])); } catch (e) {} }
+        infos.push('{' + d.join(', ') + '}');
+      }
+      add('input devices', infos.join('\n  ') || '(none)');
+      // Try to attach a listener to the first input
+      if (list[0]) {
+        list[0].onmidimessage = function (ev) {
+          add('onmidimessage!', 'data=' + (ev && ev.data ? Array.prototype.join.call(ev.data, ',') : JSON.stringify(ev)));
+        };
+        add('listener', 'attached to first input — press keys');
+      }
+    } catch (e) {
+      add('inputs', 'error: ' + e);
+    }
+  }
+
+  try {
+    navigator.requestMIDIAccess(function (access) {
+      describeAccess(access);
+    }, function (err) {
+      add('ERROR callback fired', String(err));
+    });
+  } catch (e) {
+    add('callback-style call', 'THROWS: ' + e);
+  }
+
+  setTimeout(function () {
+    add('_callback_receiveMIDIMessage after 4s', window._callback_receiveMIDIMessage === stub ? 'STILL OUR STUB (shim never replaced it)' : 'REPLACED by shim: ' + String(window._callback_receiveMIDIMessage).slice(0, 400));
+  }, 4000);
 })();
 </script>
 </body>
