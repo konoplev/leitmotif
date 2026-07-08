@@ -15,6 +15,13 @@
       // If the app fails to boot (old WebView, missing API), show the error
       // instead of a silent black page
       (function () {
+        // The iOS Web MIDI Browser app's native side calls this global to
+        // deliver MIDI events, but its shim only defines it after the page
+        // calls requestMIDIAccess. With a device connected at load time the
+        // calls arrive early and throw ReferenceErrors — stub it until the
+        // shim installs the real handler.
+        window._callback_receiveMIDIMessage = window._callback_receiveMIDIMessage || function () {};
+
         function show(msg) {
           // App.tsx sets this flag once React has mounted successfully
           if (window.__leitmotifBooted) return;
@@ -27,6 +34,10 @@
           document.body.insertBefore(pre, document.body.firstChild);
         }
         window.addEventListener('error', function (e) {
+          // Only report errors from our own scripts; WebView wrapper apps
+          // inject/eval their own code whose failures are not ours
+          var from = e.filename || '';
+          if (from.indexOf(location.host) === -1) return;
           show(e.message || String(e.error || 'unknown error'));
         });
         window.addEventListener('unhandledrejection', function (e) {
