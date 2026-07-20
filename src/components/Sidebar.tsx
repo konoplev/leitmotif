@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Music, Piano, RotateCcw } from 'lucide-react'
+import { Music, Pencil, Piano, RotateCcw } from 'lucide-react'
 import { useSettings, type ChordDisplayMode } from '@/context/SettingsContext'
-import { CHORD_LEVELS, NOTE_LEVELS } from '@/lib/music'
+import { usePlans } from '@/context/PlansContext'
+import { effectiveStepIds, planItemIds } from '@/lib/plans'
 import { boxDistribution, dueCount, getDeck, resetProgress } from '@/lib/leitner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PlanEditor } from '@/components/PlanEditor'
 import {
   Dialog,
   DialogContent,
@@ -34,27 +35,28 @@ const CHORD_DISPLAY_OPTIONS: { value: ChordDisplayMode; label: string }[] = [
 
 export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }: SidebarProps) {
   const { settings, update } = useSettings()
+  const { plans } = usePlans()
   const [resetOpen, setResetOpen] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
 
-  const isNoteMode = settings.mode === 'note'
-  const levels = isNoteMode ? settings.noteLevels : settings.chordLevels
-  const levelDefs = isNoteMode ? NOTE_LEVELS : CHORD_LEVELS
+  const plan = plans.find((p) => p.id === settings.planId) ?? plans[0]
+  const activeIds = effectiveStepIds(plan, settings.activeSteps[plan.id])
 
   const deck = useMemo(
-    () => getDeck(settings.mode, levels),
+    () => getDeck(planItemIds(plan, activeIds)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [settings.mode, levels.join(','), progressVersion],
+    [plan, activeIds.join(','), progressVersion],
   )
   const due = dueCount(deck)
   const dist = boxDistribution(deck)
   const maxDist = Math.max(1, ...dist)
 
-  const toggleLevel = (lvl: number) => {
-    const next = levels.includes(lvl)
-      ? levels.filter((l) => l !== lvl)
-      : [...levels, lvl].sort()
-    if (next.length === 0) return // keep at least one level active
-    update(isNoteMode ? { noteLevels: next } : { chordLevels: next })
+  const toggleStep = (stepId: string) => {
+    const next = activeIds.includes(stepId)
+      ? activeIds.filter((id) => id !== stepId)
+      : plan.steps.filter((s) => activeIds.includes(s.id) || s.id === stepId).map((s) => s.id)
+    if (next.length === 0) return // keep at least one step active
+    update({ activeSteps: { ...settings.activeSteps, [plan.id]: next } })
   }
 
   const handleReset = () => {
@@ -95,28 +97,42 @@ export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }:
         </span>
       </div>
 
-      {/* Mode selector */}
+      {/* Plan selector */}
       <section className="space-y-2">
-        <Label>Training Mode</Label>
-        <Tabs value={settings.mode} onValueChange={(v) => update({ mode: v as 'note' | 'chord' })}>
-          <TabsList>
-            <TabsTrigger value="note">Notes</TabsTrigger>
-            <TabsTrigger value="chord">Chords</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <Label>Training Plan</Label>
+        <div className="flex items-center gap-2">
+          <select
+            value={plan.id}
+            onChange={(e) => update({ planId: e.target.value })}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-secondary px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setEditorOpen(true)}
+            title="Edit plans"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        </div>
       </section>
 
-      {/* Level selector */}
+      {/* Step selector */}
       <section className="space-y-2">
-        <Label>Active Levels</Label>
+        <Label>Active Steps</Label>
         <div className="grid gap-1.5">
-          {Object.entries(levelDefs).map(([lvl, def]) => {
-            const n = Number(lvl)
-            const active = levels.includes(n)
+          {plan.steps.map((step, i) => {
+            const active = activeIds.includes(step.id)
             return (
               <button
-                key={lvl}
-                onClick={() => toggleLevel(n)}
+                key={step.id}
+                onClick={() => toggleStep(step.id)}
                 className={cn(
                   'flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors',
                   active
@@ -126,13 +142,16 @@ export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }:
               >
                 <span
                   className={cn(
-                    'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold',
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold',
                     active ? 'bg-primary text-primary-foreground' : 'bg-muted',
                   )}
                 >
-                  {lvl}
+                  {i + 1}
                 </span>
-                {def.name}
+                <span className="min-w-0 truncate">{step.name}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {step.items.length}
+                </span>
               </button>
             )
           })}
@@ -236,6 +255,8 @@ export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }:
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Music className="h-3 w-3" /> Leitner spaced repetition · stored locally
       </div>
+
+      <PlanEditor open={editorOpen} onOpenChange={setEditorOpen} />
     </aside>
   )
 }

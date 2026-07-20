@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2, XCircle } from 'lucide-react'
 import { useSettings } from '@/context/SettingsContext'
+import { usePlans } from '@/context/PlansContext'
 import {
-  CHORD_BY_ID,
-  NOTE_BY_ID,
   chordMatches,
   chordVexKeys,
   clefForMidi,
+  midiToLabel,
   noteMatches,
+  pitchClass,
+  resolveCard,
   type ChordSpec,
 } from '@/lib/music'
+import { effectiveStepIds, planItemIds } from '@/lib/plans'
 import {
   demoteCard,
   getDeck,
@@ -21,11 +24,20 @@ import {
 import type { MidiState } from '@/hooks/useMidi'
 import { MusicSheet } from '@/components/MusicSheet'
 import { PianoKeyboard, keyboardWindowFor } from '@/components/PianoKeyboard'
-import { Button } from '@/components/ui/button'
-import { useToast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 
 type Phase = 'waiting' | 'success' | 'reveal'
+
+interface Feedback {
+  text: string
+  tone: 'success' | 'error'
+}
+
+interface PressedNote {
+  midi: number
+  label: string
+  correct: boolean
+}
 
 const CHORD_DEBOUNCE_MS = 80
 const SUCCESS_ADVANCE_MS = 1100
@@ -38,17 +50,25 @@ interface TrainingViewProps {
 
 export function TrainingView({ midi, onProgress }: TrainingViewProps) {
   const { settings } = useSettings()
-  const { toast } = useToast()
+  const { plans } = usePlans()
   const { activeNotes, lastNoteOn, deviceName, virtualNoteOn, virtualNoteOff, releaseAllVirtual } =
     midi
 
-  const levels = settings.mode === 'note' ? settings.noteLevels : settings.chordLevels
-  const levelKey = `${settings.mode}:${levels.join(',')}`
+  const plan = plans.find((p) => p.id === settings.planId) ?? plans[0]
+  const stepIds = effectiveStepIds(plan, settings.activeSteps[plan.id])
+  const itemIds = useMemo(
+    () => planItemIds(plan, stepIds),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan, stepIds.join(',')],
+  )
+  const deckKey = itemIds.join(',')
 
   const [card, setCard] = useState<FlashCard | null>(null)
   const [phase, setPhase] = useState<Phase>('waiting')
   const [attempts, setAttempts] = useState(0)
   const [flashNotes, setFlashNotes] = useState<number[]>([])
+  const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const [pressedNote, setPressedNote] = useState<PressedNote | null>(null)
 
   const phaseRef = useRef<Phase>('waiting')
   const attemptsRef = useRef(0)
@@ -71,12 +91,7 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
 
   useEffect(() => () => timersRef.current.forEach(clearTimeout), [])
 
-  const target = useMemo(() => {
-    if (!card) return null
-    return card.type === 'note'
-      ? { kind: 'note' as const, note: NOTE_BY_ID[card.id], chord: undefined }
-      : { kind: 'chord' as const, note: undefined, chord: CHORD_BY_ID[card.id] }
-  }, [card])
+  const target = useMemo(() => (card ? resolveCard(card.id) : null), [card])
 
   const targetMidis = useMemo(() => {
     if (!target) return []
@@ -84,20 +99,22 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
   }, [target])
 
   const advance = useCallback(() => {
-    const deck = getDeck(settings.mode, levels)
+    const deck = getDeck(itemIds)
     const next = pickNextCard(deck, cardRef.current?.id)
     setCard(next)
     setPhase('waiting')
     setAttempts(0)
     setFlashNotes([])
+    setFeedback(null)
+    setPressedNote(null)
     // Keys still held from the previous card must be released first,
     // and note-ons that happened before this card was shown don't count
     readyRef.current = activeNotesRef.current.size === 0
     processedSeqRef.current = lastSeqRef.current
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [levelKey])
+  }, [deckKey])
 
-  // New card whenever the mode or active levels change (also on mount)
+  // New card whenever the plan or active steps change (also on mount)
   useEffect(() => {
     cardRef.current = null
     advance()
@@ -110,25 +127,23 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
     releaseAllVirtual()
     if (attemptsRef.current === 0) {
       const updated = promoteCard(current)
-      toast({
-        title: 'Excellent!',
-        description:
+      setFeedback({
+        text:
           updated.box > current.box
-            ? `Card moved up: Box ${current.box} → ${updated.box}`
-            : `Mastered — stays in Box ${updated.box}`,
-        variant: 'success',
+            ? `Excellent! Box ${current.box} → ${updated.box}`
+            : `Excellent! Mastered — stays in Box ${updated.box}`,
+        tone: 'success',
       })
     } else {
       const updated = retainCard(current)
-      toast({
-        title: 'Correct',
-        description: `Stays in Box ${updated.box} · reviews again in 1 min`,
-        variant: 'success',
+      setFeedback({
+        text: `Correct — stays in Box ${updated.box}, reviews again in 1 min`,
+        tone: 'success',
       })
     }
     onProgress()
     later(advance, SUCCESS_ADVANCE_MS)
-  }, [advance, later, onProgress, releaseAllVirtual, toast])
+  }, [advance, later, onProgress, releaseAllVirtual])
 
   const fail = useCallback(
     (wrongNotes: number[]) => {
@@ -144,22 +159,24 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
       if (used >= settings.maxAttempts) {
         demoteCard(current)
         setPhase('reveal')
-        toast({
-          title: 'Out of attempts',
-          description: 'Card dropped to Box 1 — the correct keys are shown in green.',
-          variant: 'destructive',
+        const t = resolveCard(current.id)
+        setFeedback({
+          text:
+            t?.kind === 'note'
+              ? `Out of attempts — the answer is ${t.note.label}. Play it to continue`
+              : 'Out of attempts — play the keys shown in green to continue',
+          tone: 'error',
         })
         onProgress()
       } else {
         const left = settings.maxAttempts - used
-        toast({
-          title: 'Incorrect — try again',
-          description: `${left} attempt${left === 1 ? '' : 's'} left`,
-          variant: 'destructive',
+        setFeedback({
+          text: `Incorrect — try again (${left} attempt${left === 1 ? '' : 's'} left)`,
+          tone: 'error',
         })
       }
     },
-    [later, onProgress, releaseAllVirtual, settings.maxAttempts, toast],
+    [later, onProgress, releaseAllVirtual, settings.maxAttempts],
   )
 
   // Re-arm input once every key is released after a wrong attempt
@@ -167,43 +184,61 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
     if (activeNotes.size === 0) readyRef.current = true
   }, [activeNotes])
 
-  // Note mode: judge every note-on immediately
+  // Note cards: judge every note-on immediately. In the reveal phase the
+  // correct note must be played to move on (there is no Next button).
   useEffect(() => {
     if (!lastNoteOn || lastNoteOn.seq <= processedSeqRef.current) return
-    if (phaseRef.current !== 'waiting' || !target || target.kind !== 'note') return
-    if (!readyRef.current) return
+    if (!target || target.kind !== 'note') return
+    const currentPhase = phaseRef.current
+    if (currentPhase === 'success') return
+    if (currentPhase === 'waiting' && !readyRef.current) return
     processedSeqRef.current = lastNoteOn.seq
-    if (noteMatches(target.note, lastNoteOn.note)) {
-      succeed()
+    const correct = noteMatches(target.note, lastNoteOn.note)
+    setPressedNote({
+      midi: lastNoteOn.note,
+      label: correct ? target.note.label : midiToLabel(lastNoteOn.note),
+      correct,
+    })
+    if (currentPhase === 'waiting') {
+      if (correct) succeed()
+      else fail([lastNoteOn.note])
+    } else if (correct) {
+      advance()
     } else {
-      fail([lastNoteOn.note])
+      setFlashNotes([lastNoteOn.note])
+      later(() => setFlashNotes([]), FLASH_MS)
     }
-  }, [lastNoteOn, target, succeed, fail])
+  }, [lastNoteOn, target, succeed, fail, advance, later])
 
-  // Chord mode: debounce so near-simultaneous key presses register as one chord
+  // Chord cards: debounce so near-simultaneous key presses register as one
+  // chord. In the reveal phase a correct chord advances; wrong ones are ignored.
   useEffect(() => {
-    if (!target || target.kind !== 'chord' || phase !== 'waiting') return
+    if (!target || target.kind !== 'chord' || phase === 'success') return
     const chord = target.chord
     const required = chord.pitchClasses.length
     if (activeNotes.size < required) return
     const timer = window.setTimeout(() => {
-      if (phaseRef.current !== 'waiting' || !readyRef.current) return
+      const currentPhase = phaseRef.current
+      if (currentPhase === 'success') return
+      if (currentPhase === 'waiting' && !readyRef.current) return
       const held = [...activeNotesRef.current]
       if (held.length < required) return
-      if (chordMatches(chord, held, settings.smartMode)) {
-        succeed()
-      } else {
-        fail(held)
+      const correct = chordMatches(chord, held, settings.smartMode)
+      if (currentPhase === 'waiting') {
+        if (correct) succeed()
+        else fail(held)
+      } else if (correct) {
+        advance()
       }
     }, CHORD_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [activeNotes, target, phase, settings.smartMode, succeed, fail])
+  }, [activeNotes, target, phase, settings.smartMode, succeed, fail, advance])
 
-  // Virtual keyboard: momentary press in note mode, toggle in chord mode
+  // Virtual keyboard: momentary press for note cards, toggle for chord cards
   const handleVirtualKey = useCallback(
     (midiNote: number) => {
-      if (phaseRef.current !== 'waiting') return
-      if (settings.mode === 'chord') {
+      if (phaseRef.current === 'success') return
+      if (cardRef.current?.type === 'chord') {
         if (activeNotesRef.current.has(midiNote)) virtualNoteOff(midiNote)
         else virtualNoteOn(midiNote)
       } else {
@@ -211,7 +246,7 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
         later(() => virtualNoteOff(midiNote), 180)
       }
     },
-    [settings.mode, virtualNoteOn, virtualNoteOff, later],
+    [virtualNoteOn, virtualNoteOff, later],
   )
 
   const keyboardStart = useMemo(() => keyboardWindowFor(targetMidis), [targetMidis])
@@ -221,10 +256,44 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
       ? targetMidis
       : []
 
+  // Pressed-key labels: for chords show every held key live, for notes the last press
+  const pressedDisplay: PressedNote[] =
+    target?.kind === 'chord'
+      ? [...activeNotes]
+          .sort((a, b) => a - b)
+          .map((m) => ({
+            midi: m,
+            label: midiToLabel(m),
+            correct: target.chord.pitchClasses.includes(pitchClass(m)),
+          }))
+      : pressedNote
+        ? [pressedNote]
+        : []
+
   return (
     <main className="order-1 flex min-h-dvh min-w-0 flex-1 flex-col lg:order-2 lg:min-h-0">
       {/* Flashcard display */}
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
+        {/* Fixed-height message zone so the staff below never moves */}
+        <div className="flex h-28 w-full max-w-lg flex-col items-center justify-end gap-2 text-center">
+          <div className="flex flex-1 items-center">
+            <StatusBanner feedback={feedback} target={target} />
+          </div>
+          <div className="flex h-12 items-center gap-3">
+            {pressedDisplay.map((p) => (
+              <span
+                key={p.midi}
+                className={cn(
+                  'text-4xl font-bold tabular-nums',
+                  p.correct ? 'text-emerald-400' : 'text-red-400',
+                )}
+              >
+                {p.label}
+              </span>
+            ))}
+          </div>
+        </div>
+
         {target?.kind === 'note' && (
           <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-sm">
             <MusicSheet clef={target.note.clef} notes={[target.note]} />
@@ -244,21 +313,7 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
           </div>
         )}
 
-        <StatusBanner
-          phase={phase}
-          attempts={attempts}
-          maxAttempts={settings.maxAttempts}
-          isChord={target?.kind === 'chord'}
-          noteLabel={target?.kind === 'note' ? target.note.label : undefined}
-        />
-
         <AttemptDots used={attempts} max={settings.maxAttempts} />
-
-        {phase === 'reveal' && (
-          <Button size="lg" onClick={advance} autoFocus>
-            Next <ArrowRight className="h-4 w-4" />
-          </Button>
-        )}
       </div>
 
       {/* Virtual keyboard */}
@@ -266,9 +321,9 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
         <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between text-xs text-muted-foreground">
           <span>
             {deviceName ? 'Mirroring your MIDI keyboard' : 'Click keys to play'}
-            {!deviceName && settings.mode === 'chord' && ' — clicks toggle keys on/off'}
+            {!deviceName && target?.kind === 'chord' && ' — clicks toggle keys on/off'}
           </span>
-          {card && <span className="tabular-nums">Box {card.box} · Level {card.level}</span>}
+          {card && <span className="tabular-nums">Box {card.box}</span>}
         </div>
         <PianoKeyboard
           startMidi={keyboardStart}
@@ -294,47 +349,37 @@ function ChordSymbol({ chord }: { chord: ChordSpec }) {
 }
 
 function StatusBanner({
-  phase,
-  attempts,
-  maxAttempts,
-  isChord,
-  noteLabel,
+  feedback,
+  target,
 }: {
-  phase: Phase
-  attempts: number
-  maxAttempts: number
-  isChord: boolean
-  noteLabel?: string
+  feedback: Feedback | null
+  target: ReturnType<typeof resolveCard> | null
 }) {
-  if (phase === 'success') {
+  if (feedback) {
+    const success = feedback.tone === 'success'
+    const Icon = success ? CheckCircle2 : XCircle
     return (
-      <div className="flex items-center gap-2 text-emerald-400">
-        <CheckCircle2 className="h-5 w-5" />
-        <span className="font-medium">Excellent! + Progress</span>
+      <div
+        className={cn(
+          'flex items-center gap-2',
+          success ? 'text-emerald-400' : 'text-red-400',
+        )}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
+        <span className="font-medium">{feedback.text}</span>
       </div>
     )
   }
-  if (phase === 'reveal') {
+  if (!target) {
     return (
-      <div className="flex items-center gap-2 text-red-400">
-        <XCircle className="h-5 w-5" />
-        <span className="font-medium">
-          {noteLabel ? `The answer was ${noteLabel} — ` : ''}correct keys highlighted below
-        </span>
-      </div>
-    )
-  }
-  if (attempts > 0) {
-    const left = maxAttempts - attempts
-    return (
-      <div className="text-amber-400">
-        Incorrect! Try again ({left} attempt{left === 1 ? '' : 's'} left)
+      <div className="text-muted-foreground">
+        This step has no cards yet — add notes or chords in the plan editor
       </div>
     )
   }
   return (
     <div className="text-muted-foreground">
-      {isChord ? 'Play the chord shown above' : 'Play the note shown above'}
+      {target.kind === 'chord' ? 'Play the chord shown below' : 'Play the note shown below'}
     </div>
   )
 }

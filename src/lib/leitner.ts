@@ -1,12 +1,9 @@
 // Leitner interval-repetition system persisted in localStorage.
 // Cards live in boxes 1-5; correct answers promote, exhausted attempts demote to box 1.
 
-import { CHORD_LEVELS, NOTE_LEVELS } from './music'
-
 export interface FlashCard {
   id: string
   type: 'note' | 'chord'
-  level: number
   box: number // 1 to 5
   nextReview: string // ISO timestamp
 }
@@ -41,48 +38,45 @@ export function resetProgress(): void {
   }
 }
 
-function cardIdsForLevels(type: 'note' | 'chord', levels: number[]): { id: string; level: number }[] {
-  if (type === 'note') {
-    return levels.flatMap((lvl) =>
-      (NOTE_LEVELS[lvl]?.notes ?? []).map((n) => ({ id: n.id, level: lvl })),
-    )
-  }
-  return levels.flatMap((lvl) =>
-    (CHORD_LEVELS[lvl]?.chords ?? []).map((c) => ({ id: c.id, level: lvl })),
-  )
-}
-
-/** Ensure cards exist for every item in the active levels; returns the active deck. */
-export function getDeck(type: 'note' | 'chord', levels: number[]): FlashCard[] {
+/** Ensure cards exist for every given item id; returns the active deck. */
+export function getDeck(itemIds: string[]): FlashCard[] {
   const all = loadAll()
   let dirty = false
-  // The same card can appear in several levels (e.g. C4 in note levels 1, 2, 5)
-  const wanted = [...new Map(cardIdsForLevels(type, levels).map((w) => [w.id, w])).values()]
-  for (const { id, level } of wanted) {
+  // The same card can appear in several steps (e.g. C4 in two note ranges)
+  const wanted = [...new Set(itemIds)]
+  for (const id of wanted) {
     if (!all[id]) {
-      all[id] = { id, type, level, box: 1, nextReview: new Date(0).toISOString() }
+      const type = id.startsWith('chord_') ? 'chord' : 'note'
+      all[id] = { id, type, box: 1, nextReview: new Date(0).toISOString() }
       dirty = true
     }
   }
   if (dirty) saveAll(all)
-  return wanted.map(({ id }) => all[id])
+  return wanted.map((id) => all[id])
 }
 
 /**
  * Pick the next card: prefer due cards (random among them), otherwise review
- * ahead with the card whose nextReview is soonest. Avoids immediately
- * repeating the previous card when the deck has alternatives.
+ * ahead with a random card weighted toward lower boxes, so the order never
+ * becomes a fixed cycle. Avoids immediately repeating the previous card when
+ * the deck has alternatives.
  */
 export function pickNextCard(deck: FlashCard[], excludeId?: string): FlashCard | null {
   if (deck.length === 0) return null
-  let pool = deck.length > 1 && excludeId ? deck.filter((c) => c.id !== excludeId) : deck
+  const pool = deck.length > 1 && excludeId ? deck.filter((c) => c.id !== excludeId) : deck
   const now = Date.now()
   const due = pool.filter((c) => Date.parse(c.nextReview) <= now)
   if (due.length > 0) {
     return due[Math.floor(Math.random() * due.length)]
   }
-  pool = [...pool].sort((a, b) => Date.parse(a.nextReview) - Date.parse(b.nextReview))
-  return pool[0]
+  // Weight = 6 - box: a Box 1 card is 5x as likely as a Box 5 card
+  const weights = pool.map((c) => 6 - Math.min(5, Math.max(1, c.box)))
+  let roll = Math.random() * weights.reduce((a, b) => a + b, 0)
+  for (let i = 0; i < pool.length; i++) {
+    roll -= weights[i]
+    if (roll < 0) return pool[i]
+  }
+  return pool[pool.length - 1]
 }
 
 export function dueCount(deck: FlashCard[]): number {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SettingsProvider } from '@/context/SettingsContext'
-import { ToastProvider } from '@/components/ui/toast'
+import { PlansProvider } from '@/context/PlansContext'
 import { Sidebar } from '@/components/Sidebar'
 import { TrainingView } from '@/components/TrainingView'
 import { useMidi } from '@/hooks/useMidi'
@@ -26,7 +26,7 @@ export default function App() {
 
   return (
     <SettingsProvider>
-      <ToastProvider>
+      <PlansProvider>
         <div className="flex h-dvh flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
           <Sidebar
             deviceName={midi.deviceName}
@@ -36,7 +36,7 @@ export default function App() {
           />
           <TrainingView key={resetVersion} midi={midi} onProgress={bumpProgress} />
         </div>
-      </ToastProvider>
+      </PlansProvider>
     </SettingsProvider>
   )
 }

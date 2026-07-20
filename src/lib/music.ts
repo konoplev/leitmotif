@@ -58,39 +58,29 @@ export function isBlackKey(midi: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitchClass(midi))
 }
 
-function naturalsInRange(lo: number, hi: number): number[] {
+export function naturalsInRange(lo: number, hi: number): number[] {
   const out: number[] = []
   for (let m = lo; m <= hi; m++) if (!isBlackKey(m)) out.push(m)
   return out
 }
 
-// --- Note level groups ---
+// --- Note ids ---
+// Cards reference notes by id ("note_C4", "note_F#3", "note_Bb2"); the id
+// carries the spelling, so both spellings of a black key are distinct cards.
 
-export const NOTE_LEVELS: Record<number, { name: string; notes: NoteSpec[] }> = {
-  1: {
-    name: 'C4–G4 · Treble',
-    notes: [60, 62, 64, 65, 67].map((m) => midiToNote(m)),
-  },
-  2: {
-    name: 'C4–B4 · Treble',
-    notes: naturalsInRange(60, 71).map((m) => midiToNote(m)),
-  },
-  3: {
-    name: 'C3–B3 · Bass',
-    notes: naturalsInRange(48, 59).map((m) => midiToNote(m)),
-  },
-  4: {
-    name: 'Accidentals',
-    notes: [
-      // Both spellings of each middle-octave black key are separate cards
-      ...[61, 63, 66, 68, 70].map((m) => midiToNote(m, false)),
-      ...[61, 63, 66, 68, 70].map((m) => midiToNote(m, true)),
-    ],
-  },
-  5: {
-    name: 'Full range',
-    notes: naturalsInRange(21, 108).map((m) => midiToNote(m)),
-  },
+const NOTE_ID_RE = /^note_([A-G])(#|b)?(\d)$/
+const LETTER_PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+
+export function noteFromId(id: string): NoteSpec | null {
+  const m = NOTE_ID_RE.exec(id)
+  if (!m) return null
+  const [, letter, accidental, octave] = m
+  const pc = LETTER_PC[letter] + (accidental === '#' ? 1 : accidental === 'b' ? -1 : 0)
+  const midi = (Number(octave) + 1) * 12 + pc
+  if (midi < 21 || midi > 108) return null
+  const note = midiToNote(midi, accidental === 'b')
+  // Reject spellings that don't round-trip (e.g. Cb, E#)
+  return note.id === id ? note : null
 }
 
 // --- Chord definitions ---
@@ -141,41 +131,35 @@ function makeChord(key: string, shape: ChordShape, inversion = 0): ChordSpec {
   }
 }
 
-export const CHORD_LEVELS: Record<number, { name: string; chords: ChordSpec[] }> = {
-  1: {
-    name: 'C · F · G',
-    chords: ['C', 'F', 'G'].map((k) => makeChord(k, TRIADS[k])),
-  },
-  2: {
-    name: 'Am · Dm · Em',
-    chords: ['Am', 'Dm', 'Em'].map((k) => makeChord(k, TRIADS[k])),
-  },
-  3: {
-    name: 'All white-key triads',
-    chords: Object.entries(TRIADS).map(([k, s]) => makeChord(k, s)),
-  },
-  4: {
-    name: 'Inversions',
-    chords: ['C', 'F', 'G', 'Am', 'Dm', 'Em'].flatMap((k) => [
-      makeChord(k, TRIADS[k], 1),
-      makeChord(k, TRIADS[k], 2),
-    ]),
-  },
-  5: {
-    name: 'Seventh chords',
-    chords: Object.entries(SEVENTHS).map(([k, s]) => makeChord(k, s)),
-  },
-}
-
-// --- Lookup by card id ---
-
-export const NOTE_BY_ID: Record<string, NoteSpec> = Object.fromEntries(
-  Object.values(NOTE_LEVELS).flatMap((l) => l.notes.map((n) => [n.id, n])),
-)
+/** Full chord catalog: every triad in all inversions, plus root-position sevenths. */
+export const ALL_CHORDS: ChordSpec[] = [
+  ...Object.entries(TRIADS).flatMap(([k, s]) => [
+    makeChord(k, s),
+    makeChord(k, s, 1),
+    makeChord(k, s, 2),
+  ]),
+  ...Object.entries(SEVENTHS).map(([k, s]) => makeChord(k, s)),
+]
 
 export const CHORD_BY_ID: Record<string, ChordSpec> = Object.fromEntries(
-  Object.values(CHORD_LEVELS).flatMap((l) => l.chords.map((c) => [c.id, c])),
+  ALL_CHORDS.map((c) => [c.id, c]),
 )
+
+// --- Card resolution ---
+
+export type CardTarget =
+  | { kind: 'note'; note: NoteSpec }
+  | { kind: 'chord'; chord: ChordSpec }
+
+/** Resolve a card id ("note_C4" / "chord_C_root") to its playable target. */
+export function resolveCard(id: string): CardTarget | null {
+  if (id.startsWith('chord_')) {
+    const chord = CHORD_BY_ID[id]
+    return chord ? { kind: 'chord', chord } : null
+  }
+  const note = noteFromId(id)
+  return note ? { kind: 'note', note } : null
+}
 
 // --- Validation ---
 
