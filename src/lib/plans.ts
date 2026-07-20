@@ -7,8 +7,10 @@ import { midiToNote, naturalsInRange, noteFromId, resolveCard } from './music'
 export interface PlanStep {
   id: string
   name: string
-  /** Card ids: "note_C4", "note_F#3", "chord_C_root", … */
+  /** Card ids: "note_C4", "note_F#3", "chord_C_root", "multi:C4-E4-G4", … */
   items: string[]
+  /** Optional custom display names keyed by card id (overrides the default label) */
+  itemNames?: Record<string, string>
 }
 
 export interface Plan {
@@ -125,6 +127,15 @@ export function effectiveStepIds(plan: Plan, active: string[] | undefined): stri
   return plan.steps.slice(0, 1).map((s) => s.id)
 }
 
+/** Map from card id to custom display name across the given steps of a plan. */
+export function planItemNames(plan: Plan, stepIds: string[]): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const step of plan.steps.filter((s) => stepIds.includes(s.id))) {
+    Object.assign(result, step.itemNames)
+  }
+  return result
+}
+
 /** Resolvable card ids across the given steps of a plan. */
 export function planItemIds(plan: Plan, stepIds: string[]): string[] {
   return plan.steps
@@ -133,8 +144,9 @@ export function planItemIds(plan: Plan, stepIds: string[]): string[] {
     .filter((id) => resolveCard(id) !== null)
 }
 
-/** Short display label for a card id (note name or chord symbol). */
-export function itemLabel(id: string): string {
+/** Short display label for a card id, with optional per-step name override. */
+export function itemLabel(id: string, names?: Record<string, string>): string {
+  if (names?.[id]) return names[id]
   const target = resolveCard(id)
   if (!target) return id
   return target.kind === 'note' ? target.note.label : target.chord.symbol

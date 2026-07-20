@@ -12,7 +12,7 @@ import {
   resolveCard,
   type ChordSpec,
 } from '@/lib/music'
-import { effectiveStepIds, planItemIds } from '@/lib/plans'
+import { effectiveStepIds, planItemIds, planItemNames } from '@/lib/plans'
 import {
   demoteCard,
   getDeck,
@@ -58,6 +58,11 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
   const stepIds = effectiveStepIds(plan, settings.activeSteps[plan.id])
   const itemIds = useMemo(
     () => planItemIds(plan, stepIds),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan, stepIds.join(',')],
+  )
+  const nameOverrides = useMemo(
+    () => planItemNames(plan, stepIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [plan, stepIds.join(',')],
   )
@@ -302,7 +307,7 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
 
         {target?.kind === 'chord' && (
           <div className="flex w-full max-w-lg flex-col items-center gap-4 rounded-xl border bg-card p-8 shadow-sm">
-            <ChordSymbol chord={target.chord} />
+            <ChordSymbol chord={target.chord} name={nameOverrides[target.chord.id]} />
             {settings.chordDisplay === 'staff' && (
               <MusicSheet
                 clef={clefForMidi(target.chord.voicing)}
@@ -338,8 +343,9 @@ export function TrainingView({ midi, onProgress }: TrainingViewProps) {
   )
 }
 
-function ChordSymbol({ chord }: { chord: ChordSpec }) {
-  const [main, sub] = chord.symbol.split(' · ')
+function ChordSymbol({ chord, name }: { chord: ChordSpec; name?: string }) {
+  const display = name ?? chord.symbol
+  const [main, sub] = display.split(' · ')
   return (
     <div className="text-center">
       <div className="text-7xl font-bold tracking-tight">{main}</div>

@@ -156,6 +156,7 @@ function StepEditor({
 }) {
   const [notesInput, setNotesInput] = useState('')
   const [chordInput, setChordInput] = useState('')
+  const [chordName, setChordName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const addNotes = () => {
@@ -177,11 +178,22 @@ function StepEditor({
     }
     setError(null)
     setChordInput('')
-    if (!step.items.includes(id)) onPatch({ items: [...step.items, id] })
+    const name = chordName.trim()
+    setChordName('')
+    const newItems = step.items.includes(id) ? step.items : [...step.items, id]
+    const newNames = name
+      ? { ...step.itemNames, [id]: name }
+      : step.itemNames
+    onPatch({ items: newItems, itemNames: newNames })
   }
 
-  const removeItem = (idx: number) =>
-    onPatch({ items: step.items.filter((_, i) => i !== idx) })
+  const removeItem = (idx: number) => {
+    const id = step.items[idx]
+    const newItems = step.items.filter((_, i) => i !== idx)
+    const newNames = { ...step.itemNames }
+    delete newNames[id]
+    onPatch({ items: newItems, itemNames: Object.keys(newNames).length ? newNames : undefined })
+  }
 
   return (
     <div className="rounded-lg border bg-secondary/30 p-3">
@@ -221,12 +233,12 @@ function StepEditor({
                 : 'border-sky-900 bg-sky-950/50 text-sky-200',
             )}
           >
-            {itemLabel(id)}
+            {itemLabel(id, step.itemNames)}
             <button
               type="button"
               onClick={() => removeItem(idx)}
               className="opacity-60 hover:opacity-100"
-              aria-label={`Remove ${itemLabel(id)}`}
+              aria-label={`Remove ${itemLabel(id, step.itemNames)}`}
             >
               <X className="h-3 w-3" />
             </button>
@@ -254,7 +266,14 @@ function StepEditor({
           value={chordInput}
           onChange={(e) => { setChordInput(e.target.value); setError(null) }}
           onKeyDown={(e) => e.key === 'Enter' && addChord()}
-          placeholder="Chord: C4 E4 G4"
+          placeholder="Notes: C4 E4 G4"
+          className="h-8 w-36 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <input
+          value={chordName}
+          onChange={(e) => setChordName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addChord()}
+          placeholder="Name (optional)"
           className="h-8 min-w-0 flex-1 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
         />
         <Button type="button" variant="secondary" size="sm" onClick={addChord}>
