@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { usePlans } from '@/context/PlansContext'
 import { useSettings } from '@/context/SettingsContext'
-import { ALL_CHORDS } from '@/lib/music'
-import { isDefaultPlan, itemLabel, parseNotesInput, type Plan, type PlanStep } from '@/lib/plans'
+import { isDefaultPlan, itemLabel, parseChordInput, parseNotesInput, type Plan, type PlanStep } from '@/lib/plans'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -24,14 +23,12 @@ export function PlanEditor({ open, onOpenChange }: PlanEditorProps) {
   const { settings, update } = useSettings()
   const [selectedId, setSelectedId] = useState(settings.planId)
 
-  // Follow the plan active in the sidebar whenever the dialog opens
   useEffect(() => {
     if (open) setSelectedId(settings.planId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const plan = plans.find((p) => p.id === selectedId) ?? plans[0]
-
   const mutate = (fn: (p: Plan) => Plan) => savePlan(fn(plan))
 
   const addPlan = () => {
@@ -75,15 +72,17 @@ export function PlanEditor({ open, onOpenChange }: PlanEditorProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* overflow-y-auto + max-h keeps the whole dialog on-screen and scrollable */}
+      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col gap-4 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Plans</DialogTitle>
           <DialogDescription>
-            A plan is a set of named steps; each step holds the notes and chords it trains.
-            Changes are saved in this browser.
+            Each step holds note cards (played one at a time) and chord cards (all notes
+            played simultaneously). Changes are saved in this browser.
           </DialogDescription>
         </DialogHeader>
 
+        {/* Plan picker */}
         <div className="flex items-center gap-2">
           <select
             value={plan.id}
@@ -92,15 +91,15 @@ export function PlanEditor({ open, onOpenChange }: PlanEditorProps) {
           >
             {plans.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
-                {isDefaultPlan(p.id) ? ' (default)' : ''}
+                {p.name}{isDefaultPlan(p.id) ? ' (default)' : ''}
               </option>
             ))}
           </select>
-          <Button variant="outline" size="sm" onClick={addPlan}>
+          <Button type="button" variant="outline" size="sm" onClick={addPlan}>
             <Plus className="h-4 w-4" /> New Plan
           </Button>
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className="text-muted-foreground"
@@ -111,16 +110,18 @@ export function PlanEditor({ open, onOpenChange }: PlanEditorProps) {
           </Button>
         </div>
 
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Name</span>
+        {/* Plan name */}
+        <div className="flex items-center gap-2 text-sm">
+          <span className="shrink-0 text-muted-foreground">Name</span>
           <input
             value={plan.name}
             onChange={(e) => mutate((p) => ({ ...p, name: e.target.value }))}
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-secondary px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
           />
-        </label>
+        </div>
 
-        <div className="flex max-h-[50vh] flex-col gap-3 overflow-y-auto pr-1">
+        {/* Steps */}
+        <div className="flex flex-col gap-3">
           {plan.steps.map((step, i) => (
             <StepEditor
               key={step.id}
@@ -131,7 +132,7 @@ export function PlanEditor({ open, onOpenChange }: PlanEditorProps) {
               onRemove={() => removeStep(step.id)}
             />
           ))}
-          <Button variant="outline" size="sm" className="self-start" onClick={addStep}>
+          <Button type="button" variant="outline" size="sm" className="self-start" onClick={addStep}>
             <Plus className="h-4 w-4" /> Add Step
           </Button>
         </div>
@@ -154,26 +155,29 @@ function StepEditor({
   onRemove: () => void
 }) {
   const [notesInput, setNotesInput] = useState('')
+  const [chordInput, setChordInput] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const addNotes = () => {
     if (!notesInput.trim()) return
     const { ids, errors } = parseNotesInput(notesInput)
-    if (errors.length > 0) {
-      setError(`Not recognized: ${errors.join(', ')}`)
-      return
-    }
+    if (errors.length > 0) { setError(`Not recognized: ${errors.join(', ')}`); return }
     setError(null)
     setNotesInput('')
-    // Skip duplicates already in the step
     const fresh = ids.filter((id) => !step.items.includes(id))
     if (fresh.length > 0) onPatch({ items: [...step.items, ...fresh] })
   }
 
-  const addChord = (chordId: string) => {
-    if (chordId && !step.items.includes(chordId)) {
-      onPatch({ items: [...step.items, chordId] })
+  const addChord = () => {
+    if (!chordInput.trim()) return
+    const { id, errors } = parseChordInput(chordInput)
+    if (errors.length > 0 || !id) {
+      setError(errors.length > 0 ? `Not recognized: ${errors.join(', ')}` : 'Need at least 2 notes')
+      return
     }
+    setError(null)
+    setChordInput('')
+    if (!step.items.includes(id)) onPatch({ items: [...step.items, id] })
   }
 
   const removeItem = (idx: number) =>
@@ -181,6 +185,7 @@ function StepEditor({
 
   return (
     <div className="rounded-lg border bg-secondary/30 p-3">
+      {/* Step header */}
       <div className="mb-2 flex items-center gap-2">
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold">
           {index + 1}
@@ -191,6 +196,7 @@ function StepEditor({
           className="h-8 min-w-0 flex-1 rounded-md border border-input bg-secondary px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
         />
         <button
+          type="button"
           onClick={onRemove}
           disabled={!canDelete}
           className="text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
@@ -200,7 +206,8 @@ function StepEditor({
         </button>
       </div>
 
-      <div className="mb-2 flex flex-wrap gap-1.5">
+      {/* Current items */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
         {step.items.length === 0 && (
           <span className="text-xs text-muted-foreground">No cards yet</span>
         )}
@@ -209,13 +216,14 @@ function StepEditor({
             key={`${id}_${idx}`}
             className={cn(
               'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs',
-              id.startsWith('chord_')
+              id.startsWith('chord_') || id.startsWith('multi:')
                 ? 'border-violet-900 bg-violet-950/50 text-violet-200'
                 : 'border-sky-900 bg-sky-950/50 text-sky-200',
             )}
           >
             {itemLabel(id)}
             <button
+              type="button"
               onClick={() => removeItem(idx)}
               className="opacity-60 hover:opacity-100"
               aria-label={`Remove ${itemLabel(id)}`}
@@ -226,32 +234,34 @@ function StepEditor({
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Add individual notes */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <input
           value={notesInput}
-          onChange={(e) => setNotesInput(e.target.value)}
+          onChange={(e) => { setNotesInput(e.target.value); setError(null) }}
           onKeyDown={(e) => e.key === 'Enter' && addNotes()}
-          placeholder="Notes: C4 F#4 or C3-B3"
-          className="h-8 w-44 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          placeholder="Note(s): C4  F#4  C3-B3"
+          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
         />
-        <Button variant="secondary" size="sm" onClick={addNotes}>
+        <Button type="button" variant="secondary" size="sm" onClick={addNotes}>
           Add Notes
         </Button>
-        <select
-          value=""
-          onChange={(e) => addChord(e.target.value)}
-          className="h-8 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-        >
-          <option value="" disabled>
-            + Add chord…
-          </option>
-          {ALL_CHORDS.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.symbol}
-            </option>
-          ))}
-        </select>
       </div>
+
+      {/* Add chord (notes played simultaneously) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={chordInput}
+          onChange={(e) => { setChordInput(e.target.value); setError(null) }}
+          onKeyDown={(e) => e.key === 'Enter' && addChord()}
+          placeholder="Chord: C4 E4 G4"
+          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-secondary px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <Button type="button" variant="secondary" size="sm" onClick={addChord}>
+          Add Chord
+        </Button>
+      </div>
+
       {error && <div className="mt-1.5 text-xs text-red-400">{error}</div>}
     </div>
   )

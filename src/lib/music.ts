@@ -151,8 +151,24 @@ export type CardTarget =
   | { kind: 'note'; note: NoteSpec }
   | { kind: 'chord'; chord: ChordSpec }
 
-/** Resolve a card id ("note_C4" / "chord_C_root") to its playable target. */
+/** Resolve a card id ("note_C4" / "chord_C_root" / "multi:C4-E4-G4") to its playable target. */
 export function resolveCard(id: string): CardTarget | null {
+  if (id.startsWith('multi:')) {
+    const labels = id.slice(6).split('-')
+    const notes = labels.map((l) => noteFromId(`note_${l}`))
+    if (notes.some((n) => n === null) || notes.length < 2) return null
+    const validNotes = notes as NoteSpec[]
+    const midis = validNotes.map((n) => n.midi)
+    const chord: ChordSpec = {
+      id,
+      symbol: validNotes.map((n) => n.label).join(' + '),
+      voicing: midis,
+      pitchClasses: [...new Set(midis.map(pitchClass))],
+      bassPc: pitchClass(Math.min(...midis)),
+      label: validNotes.map((n) => n.label).join('+'),
+    }
+    return { kind: 'chord', chord }
+  }
   if (id.startsWith('chord_')) {
     const chord = CHORD_BY_ID[id]
     return chord ? { kind: 'chord', chord } : null

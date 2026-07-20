@@ -46,7 +46,7 @@ export function getDeck(itemIds: string[]): FlashCard[] {
   const wanted = [...new Set(itemIds)]
   for (const id of wanted) {
     if (!all[id]) {
-      const type = id.startsWith('chord_') ? 'chord' : 'note'
+      const type = id.startsWith('chord_') || id.startsWith('multi:') ? 'chord' : 'note'
       all[id] = { id, type, box: 1, nextReview: new Date(0).toISOString() }
       dirty = true
     }

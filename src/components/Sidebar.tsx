@@ -233,7 +233,7 @@ export function Sidebar({ deviceName, midiSupported, progressVersion, onReset }:
               <RotateCcw className="h-4 w-4" /> Reset Progress
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Reset all progress?</DialogTitle>
               <DialogDescription>

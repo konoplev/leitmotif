@@ -143,6 +143,31 @@ export function itemLabel(id: string): string {
 // --- Editor input parsing ---
 
 /**
+ * Parse a chord defined by its constituent notes: space/comma/+-separated
+ * tokens, each a single note ("C4", "F#3", "Bb2"). Returns a "multi:" id
+ * sorted by MIDI, or an error list if any token is invalid.
+ * Requires at least 2 distinct pitches.
+ */
+export function parseChordInput(text: string): { id: string | null; errors: string[] } {
+  const tokens = text.trim().split(/[\s,+]+/).filter(Boolean)
+  if (tokens.length === 0) return { id: null, errors: [] }
+  const pairs = tokens.map((token) => {
+    const m = /^([A-Ga-g])(#|b)?(\d)$/.exec(token)
+    if (!m) return { token, note: null as ReturnType<typeof noteFromId> }
+    return { token, note: noteFromId(`note_${m[1].toUpperCase()}${m[2] ?? ''}${m[3]}`) }
+  })
+  const errors = pairs.filter((p) => p.note === null).map((p) => p.token)
+  if (errors.length > 0) return { id: null, errors }
+  // Deduplicate by MIDI, sort low→high
+  const seen = new Set<number>()
+  const sorted = (pairs.map((p) => p.note!) as NonNullable<ReturnType<typeof noteFromId>>[])
+    .filter((n) => { if (seen.has(n.midi)) return false; seen.add(n.midi); return true })
+    .sort((a, b) => a.midi - b.midi)
+  if (sorted.length < 2) return { id: null, errors: ['Need at least 2 different notes for a chord'] }
+  return { id: `multi:${sorted.map((n) => n.label).join('-')}`, errors: [] }
+}
+
+/**
  * Parse user note input: tokens separated by spaces/commas, each either a
  * single note ("C4", "F#3", "Bb2") or a range of naturals ("C3-B3").
  */
